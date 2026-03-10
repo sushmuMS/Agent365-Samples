@@ -19,9 +19,15 @@ using Microsoft.Agents.Storage.Transcript;
 using Microsoft.Extensions.AI;
 using System.Reflection;
 
-
-
 var builder = WebApplication.CreateBuilder(args);
+
+if (builder.Environment.IsDevelopment())
+{
+    // Workaround: HTTP/2 stream reset on login.microsoftonline.com in some dev environments.
+    // This disables HTTP/2 for MSAL token acquisition only in Development.
+    // TODO: Remove once the SDK supports per-client HTTP/2 configuration for MSAL.
+    AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2Support", false);
+}
 
 // Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
 builder.ConfigureOpenTelemetry();

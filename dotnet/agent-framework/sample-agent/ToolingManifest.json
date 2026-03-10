@@ -1,7 +1,8 @@
 {
 	"mcpServers": [
 		{
-			"mcpServerName": "mcp_MailTools"
+			"mcpServerName": "mcp_TaskPersonalizationServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_TaskPersonalizationServer"
 		}
 	]
 }

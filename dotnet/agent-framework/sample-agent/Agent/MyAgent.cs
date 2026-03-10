@@ -6,6 +6,8 @@ using Agent365AgentFrameworkSampleAgent.Tools;
 using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
+using Microsoft.Agents.A365.Tooling.Models;
+using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
@@ -60,6 +62,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
+        private readonly IMcpToolServerConfigurationService? _toolServerConfigService = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
@@ -98,6 +101,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             IConfiguration configuration,
             IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
+            IMcpToolServerConfigurationService toolServerConfigService,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
@@ -105,6 +109,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
+            _toolServerConfigService = toolServerConfigService;
 
             // Read auth handler names from configuration (can be empty/null to disable)
             AgenticAuthHandlerName = _configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
@@ -316,6 +321,38 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     }
                 }
             }
+            else if (toolService != null && IsLocalMcpMode() && _toolServerConfigService != null)
+            {
+                try
+                {
+                    string toolCacheKey = GetToolCacheKey(turnState);
+                    if (_agentToolCache.TryGetValue(toolCacheKey, out var cached) && cached?.Count > 0)
+                    {
+                        toolList.AddRange(cached);
+                    }
+                    else
+                    {
+                        await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+                        _logger?.LogInformation("TOOLS_MODE=MockMCPServer: loading tools directly from ToolingManifest.json.");
+                        var localTools = await LoadLocalMcpToolsAsync(context);
+                        if (localTools.Count > 0)
+                        {
+                            toolList.AddRange(localTools);
+                            _agentToolCache.TryAdd(toolCacheKey, [.. localTools]);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (ShouldSkipToolingOnErrors())
+                        _logger?.LogWarning(ex, "Failed to load local MCP tools. Continuing (SKIP_TOOLING_ON_ERRORS=true).");
+                    else
+                    {
+                        _logger?.LogError(ex, "Failed to load local MCP tools.");
+                        throw;
+                    }
+                }
+            }
 
             // Create Chat Options with tools:
             var toolOptions = new ChatOptions
@@ -375,6 +412,40 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 return userToolCacheKey;
             }
             return userToolCacheKey;
+        }
+
+        private static bool IsLocalMcpMode() =>
+            string.Equals(Environment.GetEnvironmentVariable("TOOLS_MODE"), "MockMCPServer", StringComparison.OrdinalIgnoreCase);
+
+        private async Task<List<AITool>> LoadLocalMcpToolsAsync(ITurnContext context)
+        {
+            var tools = new List<AITool>();
+            var manifestPath = Path.Combine(AppContext.BaseDirectory, "ToolingManifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                _logger?.LogWarning("ToolingManifest.json not found at {Path}", manifestPath);
+                return tools;
+            }
+
+            var json = await File.ReadAllTextAsync(manifestPath);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("mcpServers", out var servers)) return tools;
+
+            foreach (var server in servers.EnumerateArray())
+            {
+                if (!server.TryGetProperty("url", out var urlProp)) continue;
+                var url = urlProp.GetString();
+                if (string.IsNullOrEmpty(url)) continue;
+
+                var name = server.TryGetProperty("mcpServerName", out var nameProp) ? nameProp.GetString() ?? "unknown" : "unknown";
+                var serverConfig = new MCPServerConfig { mcpServerName = name, url = url, id = name, scope = string.Empty, audience = string.Empty, publisher = string.Empty };
+
+                _logger?.LogInformation("Loading MCP tools from local server: {Name} at {Url}", name, url);
+                var mcpTools = await _toolServerConfigService!.GetMcpClientToolsAsync(context, serverConfig, string.Empty);
+                if (mcpTools != null) tools.AddRange(mcpTools);
+            }
+
+            return tools;
         }
     }
 }
