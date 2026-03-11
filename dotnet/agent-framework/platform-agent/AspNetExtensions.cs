@@ -16,6 +16,7 @@ namespace Agent365PlatformAgent;
 
 public static class AspNetExtensions
 {
+    private static readonly HttpClient _openIdHttpClient = new();
     private static readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _openIdMetadataCache = new();
 
     /// <summary>
@@ -124,7 +125,7 @@ public static class AspNetExtensions
                     if (validationOptions.AzureBotServiceTokenHandling && AuthenticationConstants.BotFrameworkTokenIssuer.Equals(issuer))
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager = _openIdMetadataCache.GetOrAdd(validationOptions.AzureBotServiceOpenIdMetadataUrl, key =>
-                            new ConfigurationManager<OpenIdConnectConfiguration>(key, new OpenIdConnectConfigurationRetriever(), new HttpClient())
+                            new ConfigurationManager<OpenIdConnectConfiguration>(key, new OpenIdConnectConfigurationRetriever(), _openIdHttpClient)
                             {
                                 AutomaticRefreshInterval = openIdMetadataRefresh
                             });
@@ -132,7 +133,7 @@ public static class AspNetExtensions
                     else
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager = _openIdMetadataCache.GetOrAdd(validationOptions.OpenIdMetadataUrl, key =>
-                            new ConfigurationManager<OpenIdConnectConfiguration>(key, new OpenIdConnectConfigurationRetriever(), new HttpClient())
+                            new ConfigurationManager<OpenIdConnectConfiguration>(key, new OpenIdConnectConfigurationRetriever(), _openIdHttpClient)
                             {
                                 AutomaticRefreshInterval = openIdMetadataRefresh
                             });

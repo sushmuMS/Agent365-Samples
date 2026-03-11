@@ -114,13 +114,13 @@ namespace Agent365PlatformAgent.Agent
                         var agent = await GetClientAgent(turnContext, turnState, _toolService, authHandlerName);
 
                         // Stateless: fresh thread per agentic request (no cross-call memory)
-                        var thread = agent!.GetNewThread();
+                        var thread = agent.GetNewThread();
 
                         await foreach (var response in agent.RunStreamingAsync(
                             userText, thread, cancellationToken: cancellationToken))
                         {
                             if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
-                                turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                                turnContext.StreamingResponse.QueueTextChunk(response.Text);
                         }
                         // Note: thread state is NOT saved — each agentic call is independent
                     }
@@ -132,7 +132,7 @@ namespace Agent365PlatformAgent.Agent
                 });
         }
 
-        private async Task<AIAgent?> GetClientAgent(
+        private async Task<AIAgent> GetClientAgent(
             ITurnContext context, ITurnState turnState,
             IMcpToolRegistrationService? toolService, string? authHandlerName)
         {
