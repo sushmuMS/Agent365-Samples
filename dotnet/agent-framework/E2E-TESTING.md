@@ -240,17 +240,230 @@ Check logs:
 
 ---
 
-## Quick Reference — Current Dev Values
+## Quick Reference — Per-Developer Values
 
-> Update these when tunnels are recreated (tunnels expire after 30 days).
+> Each developer fills in their own values. Tunnels expire after 30 days — recreate and update when needed.
+> **Do not commit personal values to source control.** Keep them in your local `appsettings.json` / launch config only.
 
-| Parameter | Value |
-|-----------|-------|
-| Tenant ID | `6e8b84fa-ae41-4a00-9ad1-934b73e5d73c` |
-| sample-agent Bot/Client ID | `0a5512fa-7e4c-4e09-aef1-b23fd8ea7e9e` |
-| sample-agent tunnel | `https://svsrn354-3978.usw2.devtunnels.ms` |
-| sample-agent tunnel ID | `quick-fog-1t2tm5j.usw2` |
-| platform-agent Bot/Client ID | `b63dcd87-e522-4989-9b2a-b81789524f6e` |
-| platform-agent tunnel | `https://svsrn354-3979.usw2.devtunnels.ms` |
-| Azure OpenAI endpoint | `https://aafraimian-3919-resource.cognitiveservices.azure.com/` |
-| Azure OpenAI deployment | `gpt-4o` |
+| Parameter | Where to get it | Your value |
+|-----------|-----------------|------------|
+| Tenant ID | Azure Portal → Azure Active Directory → Overview → Tenant ID | `<<YOUR_TENANT_ID>>` |
+| sample-agent Bot/Client ID | Teams Dev Portal → Bot Management → your sample-agent bot | `<<SAMPLE_BOT_CLIENT_ID>>` |
+| sample-agent Client Secret | Teams Dev Portal → Bot Management → your sample-agent bot → Client Secrets | *(store in user secrets / env only)* |
+| sample-agent tunnel URL | `devtunnel host <tunnel-id>` output (port 3978) | `https://<<your-tunnel-id>>-3978.usw2.devtunnels.ms` |
+| platform-agent Bot/Client ID | Teams Dev Portal → Bot Management → your platform-agent bot | `<<PLATFORM_BOT_CLIENT_ID>>` |
+| platform-agent Client Secret | Teams Dev Portal → Bot Management → your platform-agent bot → Client Secrets | *(store in user secrets / env only)* |
+| platform-agent tunnel URL | `devtunnel host <tunnel-id>` output (port 3979) | `https://<<your-tunnel-id>>-3979.usw2.devtunnels.ms` |
+| Azure OpenAI endpoint | Azure Portal → your Azure OpenAI resource → Keys and Endpoint | `https://<<your-resource>>.cognitiveservices.azure.com/` |
+| Azure OpenAI API Key | Azure Portal → your Azure OpenAI resource → Keys and Endpoint | *(store in user secrets / env only)* |
+| Azure OpenAI deployment | Azure OpenAI Studio → Deployments | `gpt-4o` *(or your deployment name)* |
+
+---
+
+## Appendix A — VS Code Dev Tunnels Setup
+
+VS Code has built-in support for dev tunnels via the **Ports** panel, which is the easiest way to set up tunnels without the CLI.
+
+### Option 1: VS Code Port Forwarding (Recommended for dev)
+
+1. Open VS Code and sign in with your Microsoft account (`Ctrl+Shift+P` → **"Remote Tunnels: Sign in"**).
+
+2. Start your agents (see Part 4).
+
+3. Open the **Ports** panel:
+   - Bottom panel → **PORTS** tab, or
+   - `Ctrl+Shift+P` → **"Forward a Port"**
+
+4. Forward port **3978** (sample-agent):
+   - Click **Forward a Port** → enter `3978`
+   - Right-click the forwarded port → **Port Visibility** → **Public**
+   - Copy the tunnel URL (e.g. `https://abc123-3978.usw2.devtunnels.ms`)
+
+5. Repeat for port **3979** (platform-agent).
+
+6. Use these URLs as your `BotEndpoint` / `validDomains` values.
+
+> **Tip:** VS Code tunnels restart automatically when you re-open the workspace. The tunnel URL stays stable as long as you keep the same VS Code session.
+
+### Option 2: devtunnel CLI
+
+```bash
+# One-time login
+devtunnel user login
+
+# Create persistent tunnels (URLs survive host restarts)
+devtunnel create --allow-anonymous
+devtunnel port create <tunnel-id> -p 3978 --protocol https
+devtunnel host <tunnel-id>   # Keep this terminal open
+
+# In a second terminal for platform-agent
+devtunnel create --allow-anonymous
+devtunnel port create <tunnel-id> -p 3979 --protocol https
+devtunnel host <tunnel-id>   # Keep this terminal open
+```
+
+> Tunnel IDs survive restarts; only the access token changes. Use `devtunnel list` to see your existing tunnels.
+
+### VS Code launch.json for both agents
+
+Add the following to `.vscode/launch.json` (create it if it doesn't exist). Replace placeholders with your actual values:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "sample-agent",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-sample-agent",
+      "program": "${workspaceFolder}/dotnet/agent-framework/sample-agent/bin/Debug/net8.0/AgentFrameworkSampleAgent.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/dotnet/agent-framework/sample-agent",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:3978"
+      },
+      "launchBrowser": false,
+      "serverReadyAction": {
+        "action": "noBrowser",
+        "pattern": "Now listening on: \\S+"
+      }
+    },
+    {
+      "name": "platform-agent",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-platform-agent",
+      "program": "${workspaceFolder}/dotnet/agent-framework/platform-agent/bin/Debug/net8.0/platform-agent.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/dotnet/agent-framework/platform-agent",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:3979"
+      },
+      "launchBrowser": false
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Both agents",
+      "configurations": ["sample-agent", "platform-agent"]
+    }
+  ]
+}
+```
+
+Add corresponding tasks to `.vscode/tasks.json`:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-sample-agent",
+      "command": "dotnet",
+      "type": "process",
+      "args": ["build", "${workspaceFolder}/dotnet/agent-framework/sample-agent/AgentFrameworkSampleAgent.csproj"],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build-platform-agent",
+      "command": "dotnet",
+      "type": "process",
+      "args": ["build", "${workspaceFolder}/dotnet/agent-framework/platform-agent/platform-agent.csproj"],
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}
+```
+
+---
+
+## Appendix B — Local-Only Files (Not Committed)
+
+The following files exist locally but are **excluded from source control** because they contain developer-specific credentials or generated artifacts:
+
+| File | Reason | How to recreate |
+|------|--------|-----------------|
+| `sample-agent/scripts/Get-McpUserToken.ps1` | Contains your personal `ClientId`, `TenantId`, and acquired tokens | Copy from the template below and fill in your values |
+| `sample-agent/appPackage/teamsapp-extracted/manifest.json` | Generated by extracting the zip; contains your specific bot ID and tunnel domain | Regenerate by unzipping `AgentSample-teamsapp.zip` after running the setup script |
+| `sample-agent/appPackage/AgentSample-teamsapp.zip` | Packed Teams app with your dev bot ID and tunnel domain baked in | Regenerate by running the setup script (Part 2a) or manually zip the `appPackage/teamsapp-extracted/` folder |
+| `sample-agent/appsettings.json` | Contains your ClientId, ClientSecret, Azure OpenAI key | Copy from `appsettings.json` example in Part 2b and fill in your values |
+| `sample-agent/appsettings.Playground.json` | Contains your local Playground overrides | Copy and adjust as needed |
+| `platform-agent/appsettings.json` | Contains your ClientId, ClientSecret, Azure OpenAI key | Copy from `appsettings.json` example in Part 3 and fill in your values |
+
+### Get-McpUserToken.ps1 Template
+
+To recreate the MCP user token script locally, create `sample-agent/scripts/Get-McpUserToken.ps1` with:
+
+```powershell
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Gets a delegated user token for the MCP service.
+# Usage: .\Get-McpUserToken.ps1 -ClientId "<your-client-id>" -TenantId "<your-tenant-id>"
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$ClientId,
+    [Parameter(Mandatory=$true)]
+    [string]$TenantId,
+    [string]$RedirectUri = "http://localhost:9999",
+    [int]   $Port        = 9999
+)
+
+$Scopes = "05879165-0320-489e-b644-f72b33f3edf0/McpServers.Mail.All " +
+          "05879165-0320-489e-b644-f72b33f3edf0/McpServers.Calendar.All " +
+          "offline_access"
+
+$encodedRedirect = [uri]::EscapeDataString($RedirectUri)
+$encodedScopes   = [uri]::EscapeDataString($Scopes)
+
+$authUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/authorize" +
+           "?client_id=$ClientId" +
+           "&response_type=code" +
+           "&redirect_uri=$encodedRedirect" +
+           "&scope=$encodedScopes" +
+           "&prompt=select_account"
+
+Write-Host "Starting local listener on port $Port..." -ForegroundColor Cyan
+$listener = [System.Net.HttpListener]::new()
+$listener.Prefixes.Add("http://localhost:$Port/")
+$listener.Start()
+
+Write-Host "Opening browser for sign-in..." -ForegroundColor Cyan
+Start-Process $authUrl
+Write-Host "Waiting for redirect..." -ForegroundColor Yellow
+
+$context = $listener.GetContext()
+$request = $context.Request
+$code    = $request.QueryString["code"]
+$error   = $request.QueryString["error"]
+
+$html = if ($code) { "<html><body><h2>Authentication complete. You can close this window.</h2></body></html>" } `
+        else       { "<html><body><h2>Authentication failed: $error</h2></body></html>" }
+$buf = [System.Text.Encoding]::UTF8.GetBytes($html)
+$context.Response.ContentLength64 = $buf.Length
+$context.Response.OutputStream.Write($buf, 0, $buf.Length)
+$context.Response.OutputStream.Close()
+$listener.Stop()
+
+if ($error -or -not $code) { Write-Error "Auth error: $error"; exit 1 }
+
+Write-Host "Exchanging code for token..." -ForegroundColor Cyan
+$tokenResponse = Invoke-RestMethod `
+    -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" `
+    -Method POST `
+    -Body @{ client_id=$ClientId; code=$code; redirect_uri=$RedirectUri; grant_type="authorization_code" } `
+    -ContentType "application/x-www-form-urlencoded"
+
+$accessToken = $tokenResponse.access_token
+Write-Host "SUCCESS! Token expires in $($tokenResponse.expires_in)s." -ForegroundColor Green
+Write-Host 'Add to launch.json: "MCP_USER_TOKEN": "' -NoNewline
+Write-Host $accessToken -NoNewline
+Write-Host '"'
+try { $accessToken | Set-Clipboard; Write-Host "(Copied to clipboard)" -ForegroundColor DarkGray } catch {}
+```
+
+> **Usage:** `.\Get-McpUserToken.ps1 -ClientId "<<SAMPLE_BOT_CLIENT_ID>>" -TenantId "<<YOUR_TENANT_ID>>"`

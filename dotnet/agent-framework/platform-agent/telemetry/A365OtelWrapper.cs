@@ -32,6 +32,7 @@ namespace Agent365PlatformAgent.telemetry
                     using var baggageScope = new BaggageBuilder()
                         .TenantId(tenantId)
                         .AgentId(agentId)
+                        .ConversationId(turnContext.Activity.Conversation?.Id ?? Guid.Empty.ToString())
                         .Build();
 
                     try
@@ -45,7 +46,7 @@ namespace Agent365PlatformAgent.telemetry
                     }
                     catch (Exception ex)
                     {
-                        logger?.LogWarning($"There was an error registering for observability: {ex.Message}");
+                        logger?.LogWarning(ex, "There was an error registering for observability.");
                     }
 
                     await func().ConfigureAwait(false);
