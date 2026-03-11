@@ -105,9 +105,9 @@ MyAgent.cs → GetClientAgent()
 ### One-time App Registration setup
 
 The `Get-McpUserToken.ps1` script requires a **public client redirect URI** on the bot's
-App Registration (`TestSushmuAgent`, `0a5512fa-7e4c-4e09-aef1-b23fd8ea7e9e`):
+App Registration (`<<YOUR_APP_REGISTRATION_NAME>>`, `<<SAMPLE_BOT_CLIENT_ID>>`):
 
-1. Azure Portal → App Registrations → **TestSushmuAgent** → Authentication
+1. Azure Portal → App Registrations → **<<YOUR_APP_REGISTRATION_NAME>>** → Authentication
 2. **Add a platform** → **Mobile and desktop applications**
 3. Custom redirect URI: `http://localhost:9999`
 4. Save
