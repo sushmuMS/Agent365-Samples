@@ -60,8 +60,8 @@ namespace Agent365PlatformAgent.telemetry
                 ["Agent.IsAgentic"] = context.IsAgenticRequest(),
                 ["Caller.Id"] = context.Activity.From?.Id,
                 ["Channel.Id"] = context.Activity.ChannelId?.ToString(),
-                ["Message.Id"] = context.Activity.Id,
-                ["Message.Text"] = context.Activity.Text
+                ["Message.Id"] = context.Activity.Id
+                // Message.Text intentionally omitted — user content must not be recorded in telemetry events
             }));
             return activity!;
         }

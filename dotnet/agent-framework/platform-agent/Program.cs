@@ -59,7 +59,7 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     return new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey))
         .GetChatClient(deployment).AsIChatClient().AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: cfg => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: cfg => cfg.EnableSensitiveData = builder.Environment.IsDevelopment())
         .Build();
 });
 

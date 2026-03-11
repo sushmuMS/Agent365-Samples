@@ -58,6 +58,13 @@ namespace Agent365PlatformAgent.Agent
             return !string.IsNullOrEmpty(bearerToken);
         }
 
+        private static bool IsDevelopmentEnvironment()
+        {
+            var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ??
+                      Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production";
+            return env.Equals("Development", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool ShouldSkipToolingOnErrors()
         {
             var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ??
@@ -227,7 +234,7 @@ namespace Agent365PlatformAgent.Agent
                     }
                 })
                 .AsBuilder()
-                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, cfg => cfg.EnableSensitiveData = true)
+                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, cfg => cfg.EnableSensitiveData = IsDevelopmentEnvironment())
                 .Build();
         }
 

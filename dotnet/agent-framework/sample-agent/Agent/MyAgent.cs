@@ -95,10 +95,17 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// Checks if graceful fallback to bare LLM mode is enabled when MCP tools fail to load.
         /// This is only allowed in Development environment AND when SKIP_TOOLING_ON_ERRORS is explicitly set to "true".
         /// </summary>
+        private static bool IsDevelopmentEnvironment()
+        {
+            var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ??
+                      Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production";
+            return env.Equals("Development", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool ShouldSkipToolingOnErrors()
         {
-            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? 
-                              Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? 
+            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ??
+                              Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ??
                               "Production";
             
             var skipToolingOnErrors = Environment.GetEnvironmentVariable("SKIP_TOOLING_ON_ERRORS");
@@ -239,8 +246,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         }
                         else if (response.Role == ChatRole.Tool)
                         {
-                            // Log tool results so we can diagnose MCP auth/invocation failures.
-                            _logger?.LogInformation("Tool result [{Role}]: {Content}", response.Role, response.Text ?? "(empty)");
+                            // Debug-level only: tool results may contain sensitive user data (emails, calendar events).
+                            _logger?.LogDebug("Tool result [{Role}]: {Content}", response.Role, response.Text ?? "(empty)");
                         }
                     }
                     turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
@@ -433,7 +440,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         }
                     })
                 .AsBuilder()
-                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
+                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = IsDevelopmentEnvironment())
                 .Build();
         }
 
