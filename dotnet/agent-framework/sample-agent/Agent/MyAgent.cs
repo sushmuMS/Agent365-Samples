@@ -66,8 +66,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
-        // Temp
-        private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
+        // Tool cache with TTL: each entry stores the tool list and the time it was loaded.
+        // Entries older than ToolCacheTtl are evicted and reloaded to avoid stale MCP connections.
+        private static readonly TimeSpan ToolCacheTtl = TimeSpan.FromMinutes(5);
+        private record ToolCacheEntry(List<AITool> Tools, DateTime LoadedAt);
+        private static readonly ConcurrentDictionary<string, ToolCacheEntry> _agentToolCache = new();
 
         /// <summary>
         /// Check if a bearer token is available in the environment for development/testing.
@@ -76,6 +79,16 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         {
             bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
             return !string.IsNullOrEmpty(bearerToken);
+        }
+
+        /// <summary>
+        /// Development-only: check for a pre-obtained delegated user token for MCP calls.
+        /// Obtain using scripts/Get-McpUserToken.ps1 and set as MCP_USER_TOKEN env var.
+        /// </summary>
+        private static bool TryGetMcpUserToken(out string? mcpUserToken)
+        {
+            mcpUserToken = Environment.GetEnvironmentVariable("MCP_USER_TOKEN");
+            return !string.IsNullOrEmpty(mcpUserToken);
         }
 
         /// <summary>
@@ -121,11 +134,14 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Handle A365 Notification Messages. 
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
+            // In local MCP mode with MCP_USER_TOKEN, skip autoSignInHandlers to prevent Teams sign-in
+            // pop-ups — the delegated token is supplied directly via the env var instead.
+            bool skipAutoSignIn = IsLocalMcpMode() && TryGetMcpUserToken(out _);
             // Agentic requests use the agentic auth handler (if configured)
-            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
+            var agenticHandlers = (!skipAutoSignIn && !string.IsNullOrEmpty(AgenticAuthHandlerName)) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
             // Non-agentic requests (Playground, WebChat) use OBO auth handler (if configured)
-            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? new[] { OboAuthHandlerName } : Array.Empty<string>();
+            var oboHandlers = (!skipAutoSignIn && !string.IsNullOrEmpty(OboAuthHandlerName)) ? new[] { OboAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
         }
 
@@ -163,12 +179,16 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 fromAccount?.Id ?? "(unknown)",
                 fromAccount?.AadObjectId ?? "(none)");
 
-            // Select the appropriate auth handler based on request type
-            // For agentic requests, use the agentic auth handler
-            // For non-agentic requests, use OBO auth handler (supports bearer token or configured auth)
+            // Select the appropriate auth handler based on request type.
+            // In local MCP mode with MCP_USER_TOKEN, skip auth handlers entirely to avoid
+            // Teams sign-in pop-ups — the delegated token is supplied via the env var.
             string? ObservabilityAuthHandlerName;
             string? ToolAuthHandlerName;
-            if (turnContext.IsAgenticRequest())
+            if (IsLocalMcpMode() && TryGetMcpUserToken(out _))
+            {
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = null;
+            }
+            else if (turnContext.IsAgenticRequest())
             {
                 ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticAuthHandlerName;
             }
@@ -217,6 +237,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         {
                             turnContext?.StreamingResponse.QueueTextChunk(response.Text);
                         }
+                        else if (response.Role == ChatRole.Tool)
+                        {
+                            // Log tool results so we can diagnose MCP auth/invocation failures.
+                            _logger?.LogInformation("Tool result [{Role}]: {Content}", response.Role, response.Text ?? "(empty)");
+                        }
                     }
                     turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
                 }
@@ -241,9 +266,16 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             AssertionHelpers.ThrowIfNull(_chatClient!, nameof(_chatClient));
 
             // Acquire the access token once for this turn — used for MCP tool loading.
+            // Dev-only: if MCP_USER_TOKEN is set in local MCP mode, use it directly and skip the
+            // auth handler entirely. This avoids Teams sign-in pop-ups during local development.
             string? accessToken = null;
             string? agentId = null;
-            if (!string.IsNullOrEmpty(authHandlerName))
+            if (IsLocalMcpMode() && TryGetMcpUserToken(out var mcpUserToken))
+            {
+                accessToken = mcpUserToken;
+                _logger?.LogInformation("Using MCP_USER_TOKEN from environment for local MCP mode.");
+            }
+            else if (!string.IsNullOrEmpty(authHandlerName))
             {
                 accessToken = await UserAuthorization.GetTurnTokenAsync(context, authHandlerName);
                 agentId = Utility.ResolveAgentIdentity(context, accessToken);
@@ -260,7 +292,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger?.LogWarning("No auth handler or bearer token available. MCP tools will not be loaded.");
             }
 
-            if (!string.IsNullOrEmpty(accessToken) && string.IsNullOrEmpty(agentId))
+            if (!IsLocalMcpMode() && !string.IsNullOrEmpty(accessToken) && string.IsNullOrEmpty(agentId))
             {
                 _logger?.LogWarning("Access token was acquired but agent identity could not be resolved. MCP tools will not be loaded.");
             }
@@ -275,21 +307,71 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetCurrentWeatherForLocation));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLocation));
 
-            if (toolService != null && !string.IsNullOrEmpty(agentId))
+            // Local MCP mode takes priority — TOOLS_MODE=MockMCPServer always loads from ToolingManifest.json.
+            // accessToken (from BEARER_TOKEN env var or auth handler) is passed through for authenticated tool calls.
+            if (toolService != null && IsLocalMcpMode() && _toolServerConfigService != null)
             {
                 try
                 {
                     string toolCacheKey = GetToolCacheKey(turnState);
-                    if (_agentToolCache.ContainsKey(toolCacheKey))
+                    bool cacheHit = _agentToolCache.TryGetValue(toolCacheKey, out var cached) &&
+                                    cached != null &&
+                                    cached.Tools.Count > 0 &&
+                                    (DateTime.UtcNow - cached.LoadedAt) < ToolCacheTtl;
+                    if (cacheHit)
                     {
-                        var cachedTools = _agentToolCache[toolCacheKey];
-                        if (cachedTools != null && cachedTools.Count > 0)
-                        {
-                            toolList.AddRange(cachedTools);
-                        }
+                        _logger?.LogDebug("Using cached MCP tools (age: {Age:mm\\:ss}).", DateTime.UtcNow - cached!.LoadedAt);
+                        toolList.AddRange(cached!.Tools);
                     }
                     else
                     {
+                        if (_agentToolCache.ContainsKey(toolCacheKey))
+                        {
+                            _logger?.LogInformation("MCP tool cache expired. Reloading fresh connections.");
+                            _agentToolCache.TryRemove(toolCacheKey, out _);
+                        }
+                        await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+                        _logger?.LogInformation("TOOLS_MODE=MockMCPServer: loading tools directly from ToolingManifest.json.");
+                        var localTools = await LoadLocalMcpToolsAsync(context, accessToken ?? string.Empty);
+                        if (localTools.Count > 0)
+                        {
+                            toolList.AddRange(localTools);
+                            _agentToolCache.TryAdd(toolCacheKey, new ToolCacheEntry([.. localTools], DateTime.UtcNow));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (ShouldSkipToolingOnErrors())
+                        _logger?.LogWarning(ex, "Failed to load local MCP tools. Continuing (SKIP_TOOLING_ON_ERRORS=true).");
+                    else
+                    {
+                        _logger?.LogError(ex, "Failed to load local MCP tools.");
+                        throw;
+                    }
+                }
+            }
+            else if (toolService != null && !string.IsNullOrEmpty(agentId))
+            {
+                try
+                {
+                    string toolCacheKey = GetToolCacheKey(turnState);
+                    bool cloudCacheHit = _agentToolCache.TryGetValue(toolCacheKey, out var cloudCached) &&
+                                         cloudCached != null &&
+                                         cloudCached.Tools.Count > 0 &&
+                                         (DateTime.UtcNow - cloudCached.LoadedAt) < ToolCacheTtl;
+                    if (cloudCacheHit)
+                    {
+                        _logger?.LogDebug("Using cached MCP tools (age: {Age:mm\\:ss}).", DateTime.UtcNow - cloudCached!.LoadedAt);
+                        toolList.AddRange(cloudCached!.Tools);
+                    }
+                    else
+                    {
+                        if (_agentToolCache.ContainsKey(toolCacheKey))
+                        {
+                            _logger?.LogInformation("MCP tool cache expired. Reloading fresh connections.");
+                            _agentToolCache.TryRemove(toolCacheKey, out _);
+                        }
                         await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
                         // For the bearer token (development) flow, pass the token as an override and
@@ -304,7 +386,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         if (a365Tools != null && a365Tools.Count > 0)
                         {
                             toolList.AddRange(a365Tools);
-                            _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                            _agentToolCache.TryAdd(toolCacheKey, new ToolCacheEntry([.. a365Tools], DateTime.UtcNow));
                         }
                     }
                 }
@@ -321,37 +403,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     }
                 }
             }
-            else if (toolService != null && IsLocalMcpMode() && _toolServerConfigService != null)
+
+            // OpenAI limits tools to 128. Truncate if we exceeded that.
+            const int MaxTools = 128;
+            if (toolList.Count > MaxTools)
             {
-                try
-                {
-                    string toolCacheKey = GetToolCacheKey(turnState);
-                    if (_agentToolCache.TryGetValue(toolCacheKey, out var cached) && cached?.Count > 0)
-                    {
-                        toolList.AddRange(cached);
-                    }
-                    else
-                    {
-                        await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
-                        _logger?.LogInformation("TOOLS_MODE=MockMCPServer: loading tools directly from ToolingManifest.json.");
-                        var localTools = await LoadLocalMcpToolsAsync(context);
-                        if (localTools.Count > 0)
-                        {
-                            toolList.AddRange(localTools);
-                            _agentToolCache.TryAdd(toolCacheKey, [.. localTools]);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    if (ShouldSkipToolingOnErrors())
-                        _logger?.LogWarning(ex, "Failed to load local MCP tools. Continuing (SKIP_TOOLING_ON_ERRORS=true).");
-                    else
-                    {
-                        _logger?.LogError(ex, "Failed to load local MCP tools.");
-                        throw;
-                    }
-                }
+                _logger?.LogWarning("Tool list exceeds OpenAI limit ({Count} tools). Truncating to {Max}.", toolList.Count, MaxTools);
+                toolList = [.. toolList.Take(MaxTools)];
             }
 
             // Create Chat Options with tools:
@@ -417,35 +475,55 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private static bool IsLocalMcpMode() =>
             string.Equals(Environment.GetEnvironmentVariable("TOOLS_MODE"), "MockMCPServer", StringComparison.OrdinalIgnoreCase);
 
-        private async Task<List<AITool>> LoadLocalMcpToolsAsync(ITurnContext context)
+        private async Task<List<AITool>> LoadLocalMcpToolsAsync(ITurnContext context, string accessToken)
         {
-            var tools = new List<AITool>();
             var manifestPath = Path.Combine(AppContext.BaseDirectory, "ToolingManifest.json");
             if (!File.Exists(manifestPath))
             {
                 _logger?.LogWarning("ToolingManifest.json not found at {Path}", manifestPath);
-                return tools;
+                return [];
             }
 
             var json = await File.ReadAllTextAsync(manifestPath);
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("mcpServers", out var servers)) return tools;
+            if (!doc.RootElement.TryGetProperty("mcpServers", out var servers)) return [];
 
-            foreach (var server in servers.EnumerateArray())
+            // Snapshot server configs before async work (JsonDocument is disposed after using block)
+            var serverConfigs = servers.EnumerateArray()
+                .Where(s => s.TryGetProperty("url", out var u) && !string.IsNullOrEmpty(u.GetString()))
+                .Select(s =>
+                {
+                    var name = s.TryGetProperty("mcpServerName", out var n) ? n.GetString() ?? "unknown" : "unknown";
+                    var url = s.GetProperty("url").GetString()!;
+                    return new MCPServerConfig { mcpServerName = name, url = url, id = name, scope = string.Empty, audience = string.Empty, publisher = string.Empty };
+                })
+                .ToList();
+
+            // Load all MCP servers in parallel with a per-server timeout
+            var loadTasks = serverConfigs.Select(async cfg =>
             {
-                if (!server.TryGetProperty("url", out var urlProp)) continue;
-                var url = urlProp.GetString();
-                if (string.IsNullOrEmpty(url)) continue;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                try
+                {
+                    _logger?.LogInformation("Loading MCP tools from local server: {Name} at {Url}", cfg.mcpServerName, cfg.url);
+                    var task = _toolServerConfigService!.GetMcpClientToolsAsync(context, cfg, accessToken);
+                    var completed = await Task.WhenAny(task, Task.Delay(Timeout.Infinite, cts.Token));
+                    if (completed != task)
+                    {
+                        _logger?.LogWarning("Timeout loading tools from MCP server {Name}. Skipping.", cfg.mcpServerName);
+                        return null;
+                    }
+                    return await task;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Failed to load tools from MCP server {Name}. Skipping.", cfg.mcpServerName);
+                    return null;
+                }
+            });
 
-                var name = server.TryGetProperty("mcpServerName", out var nameProp) ? nameProp.GetString() ?? "unknown" : "unknown";
-                var serverConfig = new MCPServerConfig { mcpServerName = name, url = url, id = name, scope = string.Empty, audience = string.Empty, publisher = string.Empty };
-
-                _logger?.LogInformation("Loading MCP tools from local server: {Name} at {Url}", name, url);
-                var mcpTools = await _toolServerConfigService!.GetMcpClientToolsAsync(context, serverConfig, string.Empty);
-                if (mcpTools != null) tools.AddRange(mcpTools);
-            }
-
-            return tools;
+            var results = await Task.WhenAll(loadTasks);
+            return results.Where(r => r != null).SelectMany(r => r!.Cast<AITool>()).ToList();
         }
     }
 }

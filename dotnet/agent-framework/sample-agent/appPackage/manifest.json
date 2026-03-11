@@ -34,7 +34,8 @@
         {
             "botId": "${{AAD_APP_CLIENT_ID}}",
             "scopes": [
-                "personal"
+                "personal",
+                "team"
             ],
             "supportsFiles": false,
             "isNotificationOnly": false

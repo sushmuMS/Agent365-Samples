@@ -1,6 +1,66 @@
 {
 	"mcpServers": [
 		{
+			"mcpServerName": "mcp_MailTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_MailTools"
+		},
+		{
+			"mcpServerName": "mcp_CalendarTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_CalendarTools"
+		},
+		{
+			"mcpServerName": "mcp_AdminTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_AdminTools"
+		},
+		{
+			"mcpServerName": "mcp_DASearch",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_DASearch"
+		},
+		{
+			"mcpServerName": "mcp_ExcelServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_ExcelServer"
+		},
+		{
+			"mcpServerName": "mcp_M365Copilot",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_M365Copilot"
+		},
+		{
+			"mcpServerName": "mcp_MeServerV2",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_MeServerV2"
+		},
+		{
+			"mcpServerName": "mcp_WebSearchTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_WebSearchTools"
+		},
+		{
+			"mcpServerName": "mcp_WordServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_WordServer"
+		},
+		{
+			"mcpServerName": "mcp_Admin365_GraphTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_Admin365_GraphTools"
+		},
+		{
+			"mcpServerName": "mcp_KnowledgeTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_KnowledgeTools"
+		},
+		{
+			"mcpServerName": "mcp_ODSPRemoteServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_ODSPRemoteServer"
+		},
+		{
+			"mcpServerName": "mcp_SharepointListsTools",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_SharepointListsTools"
+		},
+		{
+			"mcpServerName": "mcp_TeamsServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_TeamsServer"
+		},
+		{
+			"mcpServerName": "mcp_WebSearchServer",
+			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_WebSearchServer"
+		},
+		{
 			"mcpServerName": "mcp_TaskPersonalizationServer",
 			"url": "http://localhost:52857/agents/tenants/6e8b84fa-ae41-4a00-9ad1-934b73e5d73c/servers/mcp_TaskPersonalizationServer"
 		}
