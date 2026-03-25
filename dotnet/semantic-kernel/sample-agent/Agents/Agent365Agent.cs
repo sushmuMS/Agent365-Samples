@@ -28,23 +28,29 @@ public class Agent365Agent
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
     private const string TermsAndConditionsAcceptedInstructions = "You may ask follow up questions until you have enough information to answer the user's question.";
-    private string AgentInstructions(string? userName) => $@"
+    private string AgentInstructions() => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
-        The user's name is {(string.IsNullOrEmpty(userName) ? "unknown" : userName)}. Use their name naturally where appropriate.
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
 
         Respond in JSON format with the following JSON schema:
-
+        
         {{
-            ""contentType"": ""'Text'"",
+            ""contentType"": ""Text"",
             ""content"": ""{{The content of the response in plain text}}""
         }}
         ";
 
-    private string AgentInstructions_Streaming(string? userName) => $@"
+    private string AgentInstructions_Streaming() => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
-        The user's name is {(string.IsNullOrEmpty(userName) ? "unknown" : userName)}. Use their name naturally where appropriate.
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
+
+        Important: Trigger definitions (personalizations) persist on the server and survive agent restarts.
+        Before creating a new trigger, remind the user that if they have configured this trigger before
+        (even in a previous session), it already exists and does not need to be recreated.
+
+        Note: In development mode, trigger definitions are stored in memory on the MCP platform and are
+        lost when the MCP platform (not the agent) is restarted. After restarting the MCP platform,
+        the user must set up their triggers again — this is expected and not a duplicate.
 
         Respond in Markdown format
         ";
@@ -98,7 +104,6 @@ public class Agent365Agent
         {
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
-
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
             try
@@ -139,12 +144,11 @@ public class Agent365Agent
         }
 
         // Define the agent
-        var displayName = turnContext.Activity.From?.Name;
         this._agent =
             new()
             {
                 Id = turnContext.Activity.Recipient.AgenticAppId ?? Guid.NewGuid().ToString(),
-                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming(displayName) : AgentInstructions(displayName),
+                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming() : AgentInstructions(),
                 Name = AgentName,
                 Kernel = this._kernel,
                 Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()
@@ -169,20 +173,27 @@ public class Agent365Agent
         ChatMessageContent message = new(AuthorRole.User, input);
         chatHistory.Add(message);
 
-        if (context!.StreamingResponse.IsStreamingChannel)
+        if (context?.StreamingResponse.IsStreamingChannel == true)
         {
+            StringBuilder streamSb = new();
             await foreach (var response in _agent!.InvokeStreamingAsync(chatHistory, thread: thread))
             {
                 if (!string.IsNullOrEmpty(response.Message.Content))
                 {
-                    context?.StreamingResponse.QueueTextChunk(response.Message.Content);
+                    streamSb.Append(response.Message.Content);
+                    // Don't stream trigger evaluation responses to user
+                    bool isTriggerEval = false;
+                    try { isTriggerEval = JsonNode.Parse(response.Message.Content)?["isActive"] != null; } catch { }
+                    if (!isTriggerEval)
+                        context.StreamingResponse.QueueTextChunk(response.Message.Content);
                 }
             }
+            var streamContent = streamSb.ToString();
             return new Agent365AgentResponse()
             {
-                Content = "Boo",
-                ContentType = Enum.Parse<Agent365AgentResponseContentType>("text", true)
-            }; ; 
+                Content = streamContent,
+                ContentType = Agent365AgentResponseContentType.Text
+            };
         }
         else
         {
@@ -191,8 +202,37 @@ public class Agent365Agent
             {
                 if (!string.IsNullOrEmpty(response.Content))
                 {
-                    var jsonNode = JsonNode.Parse(response.Content);
-                    context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
+                    // Try to parse as JSON and extract content, handle different response formats
+                    try
+                    {
+                        var jsonNode = JsonNode.Parse(response.Content);
+
+                        // Check if this is a trigger evaluation response - don't stream these to user
+                        var isActiveNode = jsonNode?["isActive"];
+                        if (isActiveNode != null)
+                        {
+                            // Trigger evaluation response - don't stream, just collect
+                            // The caller will parse this for internal processing
+                        }
+                        else
+                        {
+                            var contentNode = jsonNode?["content"];
+                            if (contentNode != null)
+                            {
+                                context?.StreamingResponse.QueueTextChunk(contentNode.ToString());
+                            }
+                            else
+                            {
+                                // Not standard format - stream raw content
+                                context?.StreamingResponse.QueueTextChunk(response.Content);
+                            }
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Not valid JSON - stream raw content
+                        context?.StreamingResponse.QueueTextChunk(response.Content);
+                    }
                 }
 
                 chatHistory.Add(response);
@@ -204,12 +244,40 @@ public class Agent365Agent
             {
                 string resultContent = sb.ToString();
                 var jsonNode = JsonNode.Parse(resultContent);
-                Agent365AgentResponse result = new()
+
+                // Check if this is a trigger evaluation response (internal use only, not user-facing)
+                var isActiveNode = jsonNode?["isActive"];
+                if (isActiveNode != null)
                 {
-                    Content = jsonNode!["content"]!.ToString(),
-                    ContentType = Enum.Parse<Agent365AgentResponseContentType>(jsonNode["contentType"]!.ToString(), true)
+                    // This is a trigger evaluation response - return for internal processing
+                    // The caller will parse this, it should NOT be shown to the user
+                    return new Agent365AgentResponse
+                    {
+                        Content = resultContent,
+                        ContentType = Agent365AgentResponseContentType.Text
+                    };
+                }
+
+                // Check if this is a standard response format with content/contentType
+                var contentNode = jsonNode?["content"];
+                var contentTypeNode = jsonNode?["contentType"];
+
+                if (contentNode != null && contentTypeNode != null)
+                {
+                    Agent365AgentResponse result = new()
+                    {
+                        Content = contentNode.ToString(),
+                        ContentType = Enum.Parse<Agent365AgentResponseContentType>(contentTypeNode.ToString(), true)
+                    };
+                    return result;
+                }
+
+                // Unknown format - return raw content
+                return new Agent365AgentResponse
+                {
+                    Content = resultContent,
+                    ContentType = Agent365AgentResponseContentType.Text
                 };
-                return result;
             }
             catch (Exception je)
             {

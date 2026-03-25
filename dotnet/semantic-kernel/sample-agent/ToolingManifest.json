@@ -1,7 +1,13 @@
 {
 	"mcpServers": [
 		{
+			"mcpServerName": "mcp_TaskPersonalizationServerV2"
+		},
+		{
 			"mcpServerName": "mcp_MailTools"
+		},
+		{
+			"mcpServerName": "mcp_WorkIQSandbox"
 		}
 	]
 }

@@ -232,3 +232,6 @@ src/samples/ModelContextProtocol/GitHubMCPServer/Properties/ServiceDependencies/
 
 # Agent SDK generated files
 *.transcript
+
+# MSAL.PS token cache (DPAPI-encrypted, contains refresh tokens)
+.msal_cache
